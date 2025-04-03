@@ -12,24 +12,27 @@ namespace NmeaBroadcastService
         }
 
         public static IHostBuilder CreateHostBuilder(string[] args) =>
-            Host.CreateDefaultBuilder(args)
-                .UseWindowsService() // Make sure to add this for Windows services
-                .ConfigureAppConfiguration(
-                    (hostingContext, config) =>
-                    {
-                        config.SetBasePath(AppContext.BaseDirectory); // Ensure proper path is set
-                        config.AddJsonFile(
-                            "appsettings.json",
-                            optional: true,
-                            reloadOnChange: true
-                        ); // Load appsettings.json
-                    }
-                )
-                .ConfigureServices(
-                    (hostContext, services) =>
-                    {
-                        services.AddHostedService<NmeaBroadcastService>();
-                    }
+    Host.CreateDefaultBuilder(args)
+        .UseWindowsService()
+        .ConfigureAppConfiguration(
+            (hostingContext, config) =>
+            {
+                var baseDir = AppContext.BaseDirectory;
+                config.SetBasePath(baseDir);
+                config.AddJsonFile(
+                    Path.Combine(baseDir, "appsettings.json"),
+                    optional: false,
+                    reloadOnChange: true
                 );
+                // Log the configuration file path for debugging
+                Console.WriteLine($"Loading configuration from: {Path.Combine(baseDir, "appsettings.json")}");
+            }
+        )
+        .ConfigureServices(
+            (hostContext, services) =>
+            {
+                services.AddHostedService<NmeaBroadcastService>();
+                services.AddSingleton<Services.NmeaDecoder>();
+            }
+        );
     }
-}

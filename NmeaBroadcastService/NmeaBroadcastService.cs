@@ -37,18 +37,50 @@ namespace NmeaBroadcastService
         public Task StartAsync(CancellationToken cancellationToken)
         {
             _logger.LogInformation("Starting NMEA NTP and UDP broadcast service...");
+            try
+            {
+                string comPort = _configuration["ComPort"];
+                if (string.IsNullOrEmpty(comPort))
+                {
+                    _logger.LogError("ComPort configuration is missing or empty.");
+                    return Task.CompletedTask;
+                }
 
-            // Load configuration from appsettings.json
-            string comPort = _configuration["ComPort"];
-            int baudRate = int.Parse(_configuration["BaudRate"]);
-            string parityString = _configuration["Parity"];
-            Parity parity = (Parity)Enum.Parse(typeof(Parity), parityString, true);
-            _broadcastIp = _configuration["BroadcastIP"];
-            _udpPort = int.Parse(_configuration["BroadcastPort"]);
-            _ntpPort = int.Parse(_configuration["NtpPort"]);
+                if (!int.TryParse(_configuration["BaudRate"], out int baudRate))
+                {
+                    _logger.LogError("Invalid BaudRate configuration.");
+                    return Task.CompletedTask;
+                }
 
-            // Log configuration for verification
-            _logger.LogInformation(
+                string parityString = _configuration["Parity"] ?? "None";
+                if (!Enum.TryParse(typeof(Parity), parityString, true, out object parityObj))
+                {
+                    _logger.LogError("Invalid Parity configuration.");
+                    return Task.CompletedTask;
+                }
+                Parity parity = (Parity)parityObj;
+
+                _broadcastIp = _configuration["BroadcastIP"];
+                if (string.IsNullOrEmpty(_broadcastIp))
+                {
+                    _logger.LogError("BroadcastIP configuration is missing or empty.");
+                    return Task.CompletedTask;
+                }
+
+                if (!int.TryParse(_configuration["BroadcastPort"], out _udpPort))
+                {
+                    _logger.LogError("Invalid BroadcastPort configuration.");
+                    return Task.CompletedTask;
+                }
+
+                if (!int.TryParse(_configuration["NtpPort"], out _ntpPort))
+                {
+                    _logger.LogError("Invalid NtpPort configuration, using default port 123.");
+                    _ntpPort = 123;
+                }
+
+                // Log configuration for verification
+                _logger.LogInformation(
                 "Loaded Configuration: COM Port={ComPort}, BaudRate={BaudRate}, Parity={Parity}, BroadcastIP={BroadcastIP}, BroadcastPort={BroadcastPort}, NtpPort={NtpPort}",
                 comPort,
                 baudRate,
@@ -97,12 +129,22 @@ namespace NmeaBroadcastService
 
             _logger.LogInformation("NMEA Service started successfully.");
             return Task.CompletedTask;
+
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error starting service due to configuration issues.");
+                return Task.CompletedTask;
+            }
+
         }
 
         private void InitializeNtpServer()
         {
             try
             {
+                // Ensure we're using the configuration value
+                _ntpPort = int.Parse(_configuration["NtpPort"] ?? "123");
                 _ntpClient = new UdpClient(_ntpPort);
                 Task.Run(() => ListenForNtpRequests());
                 _logger.LogInformation($"NTP Server initialized on port {_ntpPort}");
@@ -112,6 +154,10 @@ namespace NmeaBroadcastService
                 _logger.LogError(
                     $"NTP port {_ntpPort} is already in use. Failed to start NTP server."
                 );
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to initialize NTP server.");
             }
         }
 
@@ -165,12 +211,12 @@ namespace NmeaBroadcastService
             // Signal cancellation
             _cancellationTokenSource.Cancel();
 
-            // Wait for the read task to finish
+            // Wait for the read task to finish with a reasonable timeout
             if (_readTask != null)
             {
                 try
                 {
-                    await Task.WhenAny(_readTask, Task.Delay(Timeout.Infinite, cancellationToken));
+                    await Task.WhenAny(_readTask, Task.Delay(5000, cancellationToken));
                 }
                 catch (TaskCanceledException)
                 {
@@ -178,9 +224,13 @@ namespace NmeaBroadcastService
                 }
             }
 
+            _serialPort?.DataReceived -= DataReceivedHandler; // Remove the event handler
             _serialPort?.Close();
+            _serialPort?.Dispose(); // Add disposal
             _udpClient?.Close();
+            _udpClient?.Dispose(); // Add disposal
             _ntpClient?.Close();
+            _ntpClient?.Dispose(); // Add disposal
 
             _logger.LogInformation("NMEA Service stopped.");
         }
